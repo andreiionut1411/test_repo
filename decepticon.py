@@ -49,7 +49,7 @@ class MultiHeadAttention(nn.Module):
         self.W_v = nn.Parameter(torch.randn(d_model, d_model))
         self.W_o = nn.Parameter(torch.randn(d_model, d_model))
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, pad_mask=None):
         batch_size, seq_len, emb_dim = x.size()
 
         Q = torch.matmul(x, self.W_q)
@@ -65,6 +65,9 @@ class MultiHeadAttention(nn.Module):
         # Apply autoregressive mask
         if mask is not None:
             attn_scores = attn_scores.masked_fill(mask == 0, float('-inf'))
+
+        if pad_mask is not None:
+            attn_scores = attn_scores.masked_fill(pad_mask == 0, float('-inf'))
 
         attn_weights = F.softmax(attn_scores, dim=-1)
         attn_output = torch.matmul(attn_weights, V)
@@ -98,8 +101,8 @@ class DecoderBlock(nn.Module):
         self.ln2 = LayerNorm(d_model)
         self.ffn = FeedForwardNetwork(d_model, d_ff)
 
-    def forward(self, x, mask):
-        attention_out = self.attn(self.ln1(x), mask)
+    def forward(self, x, mask, pad_mask):
+        attention_out = self.attn(self.ln1(x), mask, pad_mask)
         x = x + attention_out
         feed_forward_out = self.ffn(self.ln2(x))
         x = x + feed_forward_out
@@ -108,25 +111,30 @@ class DecoderBlock(nn.Module):
 
 
 class DecoderOnlyTransformer(nn.Module):
-    def __init__(self, vocab_size, d_model=128, num_heads=6, d_ff=8, num_layers=6, max_len=5000):
+    def __init__(self, vocab_size, pad_token_idx, d_model=128, num_heads=8, d_ff=8, num_layers=8, max_len=5000):
         super(DecoderOnlyTransformer, self).__init__()
         self.token_embedding = nn.Embedding(vocab_size, d_model)
         self.pos_encoding = PositionalEncoding(d_model, max_len)
         self.layers = nn.ModuleList([DecoderBlock(d_model, num_heads, d_ff) for _ in range(num_layers)])
         self.ln_final = LayerNorm(d_model)
         self.output_projection = nn.Linear(d_model, vocab_size)
+        self.pad_token_idx = pad_token_idx
 
     def generate_autoregressive_mask(self, seq_len):
         return torch.tril(torch.ones(seq_len, seq_len)).unsqueeze(0).unsqueeze(0)
 
+    def generate_padding_mask(self, x, pad_token_idx):
+        return (x != pad_token_idx).unsqueeze(1).unsqueeze(2)
+
     def forward(self, x):
         batch_size, sequence_length = x.size()
+        pad_mask = self.generate_padding_mask(x, pad_token_idx=self.pad_token_idx)
         mask = self.generate_autoregressive_mask(sequence_length).to(x.device)
         x = self.token_embedding(x)
         x = self.pos_encoding(x)
 
         for layer in self.layers:
-            x = layer(x, mask)
+            x = layer(x, mask, pad_mask)
 
         x = self.ln_final(x)
         logits = self.output_projection(x)

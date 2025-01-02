@@ -60,11 +60,11 @@ def main():
                                  collate_fn=lambda batch: collate_fn(batch, train_dataset.pad_token_idx))
 
     vocab_size = len(train_dataset.vocab)
-    model = DecoderOnlyTransformer(vocab_size=vocab_size, d_model=384, num_heads=6, d_ff=1536, num_layers=6)
+    model = DecoderOnlyTransformer(vocab_size=vocab_size, pad_token_idx=train_dataset.pad_token_idx, d_model=128, num_heads=8, d_ff=8, num_layers=8)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
-    optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    optimizer = optim.Adam(model.parameters(), lr=3e-4)
 
     num_epochs = 10
     for epoch in range(num_epochs):
@@ -89,24 +89,28 @@ def main():
         model.eval()
         total_log_likelihood = 0.0
         total_token_count = 0
+        total_loss = 0
 
         with torch.no_grad():
             for batch_idx, (inputs, targets) in tqdm(enumerate(dev_dataloader), total=len(dev_dataloader), desc=f"Epoch {epoch+1}/{num_epochs} - Dev PPL"):
                 inputs, targets = inputs.to(device), targets.to(device)
+
+                # Forward pass through the model
                 logits = model(inputs)
 
-                # Flatten logits and targets for loss calculation
-                logits = logits.view(-1, logits.size(-1))
-                targets = targets.view(-1)
+                # Compute the causal loss (same as during training)
+                loss = causal_language_model_loss(logits, targets, pad_token_idx=train_dataset.pad_token_idx)
 
-                # Compute loss
-                loss = nn.CrossEntropyLoss()(logits, targets)
+                total_loss += loss.item()
                 total_log_likelihood += loss.item() * targets.size(0)  # Multiply by batch size
                 total_token_count += targets.size(0)
 
         # Calculate perplexity
         avg_log_likelihood = total_log_likelihood / total_token_count
         perplexity = torch.exp(torch.tensor(avg_log_likelihood))
+        avg_dev_loss = total_loss / len(dev_dataloader)
+
+        print(f"Epoch [{epoch+1}/{num_epochs}] - Dev Loss: {avg_dev_loss:.3f}")
         print(f"Epoch [{epoch+1}/{num_epochs}] - Dev Perplexity: {perplexity.item():.3f}")
 
 
@@ -120,13 +124,12 @@ def main():
             inputs, targets = inputs.to(device), targets.to(device)
             logits = model(inputs)
 
-            # Calculate the next token prediction loss
-            for i in range(targets.size(1) - 1):  # For each token in the sequence (except last)
-                target_tokens = targets[:, i+1]  # Target is the next token
-                predicted_logits = logits[:, i, :]  # Logits for the current position
-                loss = nn.CrossEntropyLoss()(predicted_logits, target_tokens)
-                total_log_likelihood += loss.item() * target_tokens.size(0)  # Multiply by batch size
-                total_token_count += target_tokens.size(0)
+            # Compute causal language model loss (similar to training)
+            loss = causal_language_model_loss(logits, targets, pad_token_idx=train_dataset.pad_token_idx)
+
+            total_log_likelihood += loss.item() * targets.size(0)  # Multiply by batch size
+            total_token_count += targets.size(0)
+
 
     # Calculate final test perplexity
     avg_log_likelihood = total_log_likelihood / total_token_count
