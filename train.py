@@ -32,7 +32,9 @@ def collate_fn(batch, pad_token_idx):
     player_indices, line_indices = zip(*batch)
     player_indices_padded = pad_sequence(player_indices, batch_first=True, padding_value=pad_token_idx)
     line_indices_padded = pad_sequence(line_indices, batch_first=True, padding_value=pad_token_idx)
-    return player_indices_padded, line_indices_padded
+    inputs_padded = torch.cat((player_indices_padded, line_indices_padded), dim=1)
+    targets_padded = inputs_padded.clone()
+    return inputs_padded, targets_padded
 
 
 def main():
@@ -69,9 +71,8 @@ def main():
         # Training loop
         model.train()
         total_loss = 0.0
-        for batch_idx, (player_indices, line_indices) in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc=f"Epoch {epoch+1}/{num_epochs} - Training"):
-            player_indices, line_indices = player_indices.to(device), line_indices.to(device)
-            inputs = torch.cat((player_indices, line_indices), dim=1)
+        for batch_idx, (inputs, targets) in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc=f"Epoch {epoch+1}/{num_epochs} - Training"):
+            inputs, targets = inputs.to(device), targets.to(device)
             logits = model(inputs)
 
             loss = causal_language_model_loss(logits, inputs, train_dataset.pad_token_idx)
@@ -90,17 +91,18 @@ def main():
         total_token_count = 0
 
         with torch.no_grad():
-            for batch_idx, (player_indices, line_indices) in tqdm(enumerate(dev_dataloader), total=len(dev_dataloader), desc=f"Epoch {epoch+1}/{num_epochs} - Dev PPL"):
-                player_indices, line_indices = player_indices.to(device), line_indices.to(device)
-                inputs = torch.cat((player_indices, line_indices), dim=1)
+            for batch_idx, (inputs, targets) in tqdm(enumerate(dev_dataloader), total=len(dev_dataloader), desc=f"Epoch {epoch+1}/{num_epochs} - Dev PPL"):
+                inputs, targets = inputs.to(device), targets.to(device)
                 logits = model(inputs)
 
-                for i in range(line_indices.size(1) - 1):
-                    target_tokens = line_indices[:, i+1]
-                    predicted_logits = logits[:, i, :]
-                    loss = nn.CrossEntropyLoss()(predicted_logits, target_tokens)
-                    total_log_likelihood += loss.item() * target_tokens.size(0)
-                    total_token_count += target_tokens.size(0)
+                # Flatten logits and targets for loss calculation
+                logits = logits.view(-1, logits.size(-1))
+                targets = targets.view(-1)
+
+                # Compute loss
+                loss = nn.CrossEntropyLoss()(logits, targets)
+                total_log_likelihood += loss.item() * targets.size(0)  # Multiply by batch size
+                total_token_count += targets.size(0)
 
         # Calculate perplexity
         avg_log_likelihood = total_log_likelihood / total_token_count
@@ -114,16 +116,14 @@ def main():
     total_token_count = 0
 
     with torch.no_grad():
-        for batch_idx, (player_indices, line_indices) in tqdm(enumerate(eval_dataloader), total=len(eval_dataloader), desc="Test PPL"):
-            player_indices, line_indices = player_indices.to(device), line_indices.to(device)
-
-            inputs = torch.cat((player_indices, line_indices), dim=1)
+        for batch_idx, (inputs, targets) in tqdm(enumerate(eval_dataloader), total=len(eval_dataloader), desc="Test PPL"):
+            inputs, targets = inputs.to(device), targets.to(device)
             logits = model(inputs)
 
             # Calculate the next token prediction loss
-            for i in range(line_indices.size(1) - 1):  # For each token in the sequence (except last)
-                target_tokens = line_indices[:, i+1]  # Target is the next token
-                predicted_logits = logits[:, i, :]    # Logits for the current position
+            for i in range(targets.size(1) - 1):  # For each token in the sequence (except last)
+                target_tokens = targets[:, i+1]  # Target is the next token
+                predicted_logits = logits[:, i, :]  # Logits for the current position
                 loss = nn.CrossEntropyLoss()(predicted_logits, target_tokens)
                 total_log_likelihood += loss.item() * target_tokens.size(0)  # Multiply by batch size
                 total_token_count += target_tokens.size(0)
@@ -131,6 +131,7 @@ def main():
     # Calculate final test perplexity
     avg_log_likelihood = total_log_likelihood / total_token_count
     test_perplexity = torch.exp(torch.tensor(avg_log_likelihood))
+    print(f"Test Perplexity: {test_perplexity.item():.3f}")
 
 
 if __name__ == '__main__':

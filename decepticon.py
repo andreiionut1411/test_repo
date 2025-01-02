@@ -108,7 +108,7 @@ class DecoderBlock(nn.Module):
 
 
 class DecoderOnlyTransformer(nn.Module):
-    def __init__(self, vocab_size, d_model=384, num_heads=6, d_ff=1536, num_layers=6, max_len=5000):
+    def __init__(self, vocab_size, d_model=128, num_heads=6, d_ff=8, num_layers=6, max_len=5000):
         super(DecoderOnlyTransformer, self).__init__()
         self.token_embedding = nn.Embedding(vocab_size, d_model)
         self.pos_encoding = PositionalEncoding(d_model, max_len)
@@ -136,11 +136,12 @@ class DecoderOnlyTransformer(nn.Module):
 def causal_language_model_loss(logits, targets, pad_token_idx):
     mask = (targets != pad_token_idx).float()
     vocab_size = logits.size(-1)
-    loss_fn = nn.CrossEntropyLoss()
-
     logits = logits.view(-1, vocab_size)
     targets = targets.view(-1)
+    mask = mask.view(-1)
+
+    loss_fn = nn.CrossEntropyLoss(reduction='none')
     loss = loss_fn(logits, targets)
-    loss = loss * mask.view(-1)
+    loss = loss * mask
 
     return loss.sum() / mask.sum()
