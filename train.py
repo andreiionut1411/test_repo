@@ -9,13 +9,68 @@ from tqdm import tqdm
 from torch.nn.utils.rnn import pad_sequence
 
 
+def generate_sequence(model, tokenizer, start_sequence, context_size=256, max_tokens=1024, sampling_strategy="argmax", top_k=5):
+    """
+    Generate a sequence using a sliding window context.
+    Args:
+        model: The trained transformer model.
+        tokenizer: Tokenizer for encoding/decoding tokens.
+        start_sequence: The initial sequence to seed generation.
+        context_size: Maximum number of tokens to attend to.
+        max_tokens: Maximum tokens to generate.
+        sampling_strategy: "argmax" or "top-k".
+        top_k: Number of tokens to consider in top-k sampling.
+    Returns:
+        Generated sequence as a string.
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.eval()
+
+    # Encode the starting sequence
+    context = [tokenizer.token_to_id(token) for token in tokenizer.tokenize(start_sequence)]
+    print(context)
+    generated_tokens = context.copy()  # Store all generated tokens
+
+    for _ in range(max_tokens):
+        # Ensure context fits the context window size
+        input_context = torch.tensor([context[-context_size:]], device=device)  # Trim context to max size
+
+        # Generate logits from the model
+        with torch.no_grad():
+            logits = model(input_context)[:, -1, :]  # Take the last token's logits
+
+        # Apply the sampling strategy
+        if sampling_strategy == "argmax":
+            next_token_id = torch.argmax(logits, dim=-1).item()
+        elif sampling_strategy == "top-k":
+            # Select top-k tokens
+            probs = torch.softmax(logits, dim=-1).squeeze(0)
+            top_k_probs, top_k_indices = torch.topk(probs, k=top_k)
+            top_k_probs /= top_k_probs.sum()  # Renormalize probabilities
+            next_token_id = torch.multinomial(top_k_probs, num_samples=1).item()
+            next_token_id = top_k_indices[next_token_id].item()
+        else:
+            raise ValueError("Invalid sampling strategy. Choose 'argmax' or 'top-k'.")
+
+        # Append the next token to the generated sequence
+        context.append(next_token_id)
+        generated_tokens.append(next_token_id)
+
+        # Stop if <EOS> is generated
+        if next_token_id == tokenizer.token_to_id("<EOS>"):
+            break
+
+    # Decode the generated tokens into text
+    generated_text = tokenizer.decode(generated_tokens)
+    print(generated_text)
+    return generated_text
+
+
 class TextDataset(Dataset):
-    def __init__(self, tokenized_samples, tokenizer):
+    def __init__(self, tokenized_samples, vocab, pad_token_idx):
         self.tokenized_samples = tokenized_samples
-        self.tokenizer = tokenizer
-        self.vocab = {char: idx for idx, char in enumerate(set(c for tokens in tokenized_samples for c in tokens))}
-        self.vocab['<PAD>'] = len(self.vocab)
-        self.pad_token_idx = self.vocab['<PAD>']
+        self.vocab = vocab
+        self.pad_token_idx = pad_token_idx
         self.vocab_size = len(self.vocab)
 
     def __len__(self):
@@ -43,14 +98,19 @@ def main():
     dev_tokens = [tokenizer.tokenize(sample) for sample in processor.dev_samples]
     eval_tokens = [tokenizer.tokenize(sample) for sample in processor.eval_samples]
 
+    all_tokens = [char for tokens in (train_tokens + dev_tokens + eval_tokens) for char in tokens]
+    vocab = {char: idx for idx, char in enumerate(set(all_tokens))}
+    vocab['<PAD>'] = len(vocab)
+    pad_token_idx = vocab['<PAD>']
+
     # Create the data loaders
-    train_dataset = TextDataset(train_tokens, tokenizer)
+    train_dataset = TextDataset(train_tokens, vocab, pad_token_idx)
     train_dataloader = DataLoader(train_dataset, batch_size=50, shuffle=True,
                                   collate_fn=lambda batch: collate_fn(batch, train_dataset.pad_token_idx))
-    dev_dataset = TextDataset(dev_tokens, tokenizer)
+    dev_dataset = TextDataset(dev_tokens, vocab, pad_token_idx)
     dev_dataloader = DataLoader(dev_dataset, batch_size=50, shuffle=False,
                                 collate_fn=lambda batch: collate_fn(batch, train_dataset.pad_token_idx))
-    eval_dataset = TextDataset(eval_tokens, tokenizer)
+    eval_dataset = TextDataset(eval_tokens, vocab, pad_token_idx)
     eval_dataloader = DataLoader(eval_dataset, batch_size=50, shuffle=False,
                                  collate_fn=lambda batch: collate_fn(batch, train_dataset.pad_token_idx))
 
@@ -61,7 +121,7 @@ def main():
     model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=3e-4)
 
-    num_epochs = 10
+    num_epochs = 3
     for epoch in range(num_epochs):
         # Training loop
         model.train()
@@ -133,6 +193,7 @@ def main():
     test_perplexity = torch.exp(torch.tensor(avg_log_likelihood))
     print(f"Test Perplexity: {test_perplexity.item():.3f}")
 
+    generate_sequence(model, tokenizer, "King Lear: ")
 
 if __name__ == '__main__':
     main()
