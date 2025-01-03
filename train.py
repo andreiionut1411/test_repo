@@ -175,6 +175,9 @@ def main():
     processor.load_data()
     samples = processor.process_data()
     samples = [' '.join(sample) for sample in samples]
+    train_losses = []
+    test_losses = []
+    perplexity_values = []
 
     processor.split_data(samples)
     train_tokens = [tokenizer.tokenize(sample) for sample in processor.train_samples]
@@ -229,6 +232,7 @@ def main():
             total_loss += loss.item()
 
         avg_train_loss = total_loss / len(train_dataloader)
+        train_losses.append(avg_train_loss)
         print(f"Epoch [{epoch+1}/{num_epochs}] - Training Loss: {avg_train_loss:.3f}")
 
         # Online Perplexity Calculation on the hold-out set
@@ -256,6 +260,8 @@ def main():
         avg_log_likelihood = total_log_likelihood / total_token_count
         perplexity = torch.exp(torch.tensor(avg_log_likelihood))
         avg_dev_loss = total_loss / len(dev_dataloader)
+        test_losses.append(avg_dev_loss)
+        perplexity_values.append(perplexity.item())
 
         print(f"Epoch [{epoch+1}/{num_epochs}] - Dev Loss: {avg_dev_loss:.3f}")
         print(f"Epoch [{epoch+1}/{num_epochs}] - Dev Perplexity: {perplexity.item():.3f}")
@@ -284,6 +290,14 @@ def main():
     test_perplexity = torch.exp(torch.tensor(avg_log_likelihood))
     print(f"Test Perplexity: {test_perplexity.item():.3f}")
 
+    # I save the losses into a text file so that i can make all the plots that i want later
+    with open('losses.txt', 'w') as file:
+        file.write(str(train_losses) + '\n')
+        file.write(str(test_losses) + '\n')
+        file.write(str(perplexity_values))
+
+    # Save the model
+    torch.save(model.state_dict(), 'small_char.pth')
     model.eval()
 
     # evaluate_bleu_and_rouge(model, tokenizer, device, processor.dev_samples, vocab_size)
