@@ -9,6 +9,7 @@ class CharacterLevelTokenizer:
     def __init__(self):
         self.start_token = "<SOS>"
         self.end_token = "<EOS>"
+        self.vocab = None
 
 
     def tokenize(self, text: str) -> List[str]:
@@ -40,6 +41,9 @@ class CharacterLevelTokenizer:
                 reconstructed_str += token
 
         return reconstructed_str
+
+    def set_vocab(self, vocab):
+        self.vocab = vocab
 
 
 class SubwordTokenizer:
