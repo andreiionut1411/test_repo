@@ -62,6 +62,7 @@ class SubwordTokenizer:
 
         self.start_token_id = self.tokenizer.convert_tokens_to_ids('<SOS>')
         self.end_token_id = self.tokenizer.convert_tokens_to_ids('<EOS>')
+        self.vocab = None
 
 
     def tokenize(self, text: str) -> List[int]:
@@ -88,3 +89,6 @@ class SubwordTokenizer:
         """
         filtered_token_ids = [t for t in token_ids if t not in {self.start_token_id, self.end_token_id}]
         return self.tokenizer.decode(filtered_token_ids, skip_special_tokens=True)
+
+    def set_vocab(self, vocab):
+        self.vocab = vocab

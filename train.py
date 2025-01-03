@@ -7,6 +7,7 @@ import torch.optim as optim
 import torch.nn as nn
 import torch.nn.functional as F
 import random
+from transformers import get_linear_schedule_with_warmup
 from nltk.translate.bleu_score import sentence_bleu
 from rouge import Rouge
 from tqdm import tqdm
@@ -68,7 +69,7 @@ def evaluate_bleu_and_rouge(model, tokenizer, device, dev_samples, vocab_size, c
 
 
 
-def generate_sequence(model, device, tokenizer, context, vocab_size, max_length=20, context_size=256, top_k=10):
+def generate_sequence(model, device, tokenizer, context, vocab_size, max_length=256, context_size=256, top_k=10):
     """
     Generates a sequence using the provided model and tokenizer with the given context.
 
@@ -188,23 +189,29 @@ def main():
 
     # Create the data loaders
     train_dataset = TextDataset(train_tokens, vocab, pad_token_idx)
-    train_dataloader = DataLoader(train_dataset, batch_size=35, shuffle=True,
+    train_dataloader = DataLoader(train_dataset, batch_size=50, shuffle=True,
                                   collate_fn=lambda batch: collate_fn(batch, train_dataset.pad_token_idx))
     dev_dataset = TextDataset(dev_tokens, vocab, pad_token_idx)
-    dev_dataloader = DataLoader(dev_dataset, batch_size=35, shuffle=False,
+    dev_dataloader = DataLoader(dev_dataset, batch_size=50, shuffle=False,
                                 collate_fn=lambda batch: collate_fn(batch, train_dataset.pad_token_idx))
     eval_dataset = TextDataset(eval_tokens, vocab, pad_token_idx)
-    eval_dataloader = DataLoader(eval_dataset, batch_size=35, shuffle=False,
+    eval_dataloader = DataLoader(eval_dataset, batch_size=50, shuffle=False,
                                  collate_fn=lambda batch: collate_fn(batch, train_dataset.pad_token_idx))
 
     vocab_size = len(train_dataset.vocab)
-    model = DecoderOnlyTransformer(vocab_size=vocab_size, pad_token_idx=train_dataset.pad_token_idx, d_model=384, num_heads=6, d_ff=1536, num_layers=6)
+    model = DecoderOnlyTransformer(vocab_size=vocab_size, pad_token_idx=train_dataset.pad_token_idx, d_model=384, num_heads=8, d_ff=1536, num_layers=6)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    optimizer = optim.AdamW(model.parameters(), lr=2e-3, weight_decay=0.01)
+    num_epochs = 25
 
-    num_epochs = 20
+    # Define scheduler
+    num_training_steps = len(train_dataloader) * num_epochs
+    num_warmup_steps = int(0.1 * num_training_steps)  # 10% warm-up
+    scheduler = get_linear_schedule_with_warmup(optimizer,
+                                                num_warmup_steps=num_warmup_steps,
+                                                num_training_steps=num_training_steps)
     for epoch in range(num_epochs):
         # Training loop
         model.train()
@@ -217,6 +224,7 @@ def main():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            scheduler.step()
 
             total_loss += loss.item()
 
