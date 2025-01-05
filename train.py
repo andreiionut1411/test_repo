@@ -14,17 +14,22 @@ import json
 
 
 class TextDataset(Dataset):
-    def __init__(self, tokenized_samples, vocab, pad_token_idx):
+    def __init__(self, tokenized_samples, vocab, pad_token_idx, tokenizer):
         self.tokenized_samples = tokenized_samples
         self.vocab = vocab
         self.pad_token_idx = pad_token_idx
         self.vocab_size = len(self.vocab)
+        self.tokenizer_type = type(tokenizer)
 
     def __len__(self):
         return len(self.tokenized_samples)
 
     def __getitem__(self, idx):
-        token_indices = torch.tensor([self.vocab[token] for token in self.tokenized_samples[idx]])
+        if self.tokenizer_type == CharacterLevelTokenizer:
+            token_indices = torch.tensor([self.vocab[token] for token in self.tokenized_samples[idx]])
+        else:
+            token_indices = torch.tensor(self.tokenized_samples[idx])
+
         return token_indices
 
 def collate_fn(batch, pad_token_idx):
@@ -59,20 +64,27 @@ def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, tokenizer: ob
     dev_tokens = [tokenizer.tokenize(sample) for sample in processor.dev_samples]
     eval_tokens = [tokenizer.tokenize(sample) for sample in processor.eval_samples]
 
-    all_tokens = [char for tokens in (train_tokens + dev_tokens + eval_tokens) for char in tokens]
-    vocab = {char: idx for idx, char in enumerate(set(all_tokens))}
-    vocab['<PAD>'] = len(vocab)
-    pad_token_idx = vocab['<PAD>']
-    tokenizer.set_vocab(vocab)
+    if type(tokenizer) == CharacterLevelTokenizer:
+        all_tokens = [char for tokens in (train_tokens + dev_tokens + eval_tokens) for char in tokens]
+        vocab = {char: idx for idx, char in enumerate(set(all_tokens))}
+        vocab['<PAD>'] = len(vocab)
+        pad_token_idx = vocab['<PAD>']
+        tokenizer.set_vocab(vocab)
+    elif type(tokenizer) == SubwordTokenizer:
+        if '<PAD>' not in tokenizer.tokenizer.get_vocab():
+            tokenizer.tokenizer.add_special_tokens({'additional_special_tokens': ['<PAD>']})
+        pad_token_idx = tokenizer.tokenizer.convert_tokens_to_ids('<PAD>')
+        vocab = tokenizer.tokenizer.get_vocab()
+        tokenizer.set_vocab(vocab)
 
     # Create the data loaders
-    train_dataset = TextDataset(train_tokens, vocab, pad_token_idx)
+    train_dataset = TextDataset(train_tokens, vocab, pad_token_idx, tokenizer)
     train_dataloader = DataLoader(train_dataset, batch_size=50, shuffle=True,
                                   collate_fn=lambda batch: collate_fn(batch, train_dataset.pad_token_idx))
-    dev_dataset = TextDataset(dev_tokens, vocab, pad_token_idx)
+    dev_dataset = TextDataset(dev_tokens, vocab, pad_token_idx, tokenizer)
     dev_dataloader = DataLoader(dev_dataset, batch_size=50, shuffle=False,
                                 collate_fn=lambda batch: collate_fn(batch, train_dataset.pad_token_idx))
-    eval_dataset = TextDataset(eval_tokens, vocab, pad_token_idx)
+    eval_dataset = TextDataset(eval_tokens, vocab, pad_token_idx, tokenizer)
     eval_dataloader = DataLoader(eval_dataset, batch_size=50, shuffle=False,
                                  collate_fn=lambda batch: collate_fn(batch, train_dataset.pad_token_idx))
 
@@ -89,7 +101,7 @@ def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, tokenizer: ob
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     optimizer = optim.AdamW(model.parameters(), lr=2e-3, weight_decay=0.01)
-    num_epochs = 25
+    num_epochs = 2
 
     # Define scheduler
     num_training_steps = len(train_dataloader) * num_epochs

@@ -62,6 +62,7 @@ class SubwordTokenizer:
 
         self.start_token_id = self.tokenizer.convert_tokens_to_ids('<SOS>')
         self.end_token_id = self.tokenizer.convert_tokens_to_ids('<EOS>')
+        self.end_token = self.end_token_id
         self.vocab = None
 
 

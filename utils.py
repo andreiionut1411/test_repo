@@ -3,6 +3,7 @@ import torch
 from nltk.translate.bleu_score import sentence_bleu
 from rouge import Rouge
 import torch.nn.functional as F
+from tokenizers_classes	 import CharacterLevelTokenizer, SubwordTokenizer
 
 
 def evaluate_bleu_and_rouge(model, tokenizer, device, dev_samples, vocab_size, context_size=5, max_length=1024, num_samples=200):
@@ -77,9 +78,14 @@ def generate_sequence(model, device, tokenizer, context, vocab_size, max_length=
     """
     # Prepare the context (input sequence)
     context_tokens = tokenizer.tokenize(context)
-    context_ids = torch.tensor([tokenizer.vocab[token] for token in context_tokens]).unsqueeze(0).to(device)
+
+    if type(tokenizer) == CharacterLevelTokenizer:
+        context_ids = torch.tensor([tokenizer.vocab[token] for token in context_tokens]).unsqueeze(0).to(device)
+    elif type(tokenizer) == SubwordTokenizer:
+        context_ids = torch.tensor(context_tokens).unsqueeze(0).to(device)
+
     generated_sequence = context_tokens[:-1]
-    # print(generated_sequence)
+    print(generated_sequence)
 
     # Start generating tokens
     for _ in range(max_length):
@@ -114,7 +120,11 @@ def generate_sequence(model, device, tokenizer, context, vocab_size, max_length=
         # print("Next token: ")
         # print(next_token_id)
         # print()
-        next_token = list(tokenizer.vocab.keys())[list(tokenizer.vocab.values()).index(next_token_id)]
+
+        if type(tokenizer) == CharacterLevelTokenizer:
+            next_token = list(tokenizer.vocab.keys())[list(tokenizer.vocab.values()).index(next_token_id)]
+        elif type(tokenizer) == SubwordTokenizer:
+            next_token = next_token_id
 
         # Add the generated token to the context sequence
         generated_sequence.append(next_token)
@@ -124,12 +134,13 @@ def generate_sequence(model, device, tokenizer, context, vocab_size, max_length=
 
         # Trim the context to the maximum context size
         if context_ids.size(1) > context_size:
-            context_ids = context_ids[:, 1:]  # Drop the oldest token (shift left)
+            context_ids = context_ids[:, 1:]
 
         # Stop if <EOS> token is generated
         if next_token == tokenizer.end_token:
             break
 
-    # generated_sequence = tokenizer.detokenize(generated_sequence)
+    print(generated_sequence)
+    generated_sequence = tokenizer.detokenize(generated_sequence)
     # print(generated_sequence)
     return generated_sequence

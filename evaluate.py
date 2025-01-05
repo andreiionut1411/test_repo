@@ -19,7 +19,7 @@ def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, tokenizer: ob
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
-    print(generate_sequence(model, device, tokenizer, "Richard: ", vocab_size))
+    print(generate_sequence(model, device, tokenizer, "Richard:", vocab_size))
 
 
 if __name__ == '__main__':
@@ -33,3 +33,5 @@ if __name__ == '__main__':
 
     if args.size == 'small' and args.tokenizer == 'char':
         main(d_model=384, num_heads=8, d_ff=1536, num_layers=6, tokenizer=CharacterLevelTokenizer(), model_name='small_char')
+    elif args.size == 'small' and args.tokenizer == 'word':
+        main(d_model=384, num_heads=8, d_ff=1536, num_layers=6, tokenizer=SubwordTokenizer(), model_name='small_word')
