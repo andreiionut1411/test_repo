@@ -111,7 +111,7 @@ def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, batch_size: i
                                                 num_warmup_steps=num_warmup_steps,
                                                 num_training_steps=num_training_steps)
 
-    if model_name.startswith("big"):
+    if model_name.startswith("large"):
         max_grad_norm = 1.0
 
     for epoch in range(num_epochs):
@@ -126,7 +126,7 @@ def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, batch_size: i
             optimizer.zero_grad()
             loss.backward()
 
-            if model_name.startswith("big"):
+            if model_name.startswith("large"):
                 clip_grad_norm_(model.parameters(), max_grad_norm)
 
             optimizer.step()
@@ -218,4 +218,4 @@ if __name__ == '__main__':
              tokenizer=SubwordTokenizer(), model_name="small_word")
     elif args.size == 'large' and args.tokenizer == 'char':
         main(d_model=512, num_heads=8, d_ff=2048, num_layers=8, learning_rate=5e-4, epochs=25, batch_size=32, weigh_decay=0.005,
-             tokenizer=CharacterLevelTokenizer(), model_name="big_char")
+             tokenizer=CharacterLevelTokenizer(), model_name="large_char")
