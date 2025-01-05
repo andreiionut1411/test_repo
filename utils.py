@@ -1,9 +1,24 @@
 import random
 import torch
-from nltk.translate.bleu_score import sentence_bleu
+from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 from rouge import Rouge
 import torch.nn.functional as F
 from tokenizers_classes	 import CharacterLevelTokenizer, SubwordTokenizer
+
+
+def evaluate_bleu_characters(generated_sequence, ground_truth):
+    # Use SmoothingFunction to avoid zero BLEU scores due to lack of n-gram matches
+    smoothing_function = SmoothingFunction().method1
+    bleu_score = sentence_bleu([list(ground_truth)], list(generated_sequence), smoothing_function=smoothing_function)
+    return bleu_score
+
+
+def evaluate_rouge_characters(generated_sequence, ground_truth):
+    rouge = Rouge()
+    generated_str = ''.join(generated_sequence)  # Join tokens into a string if needed
+    ground_truth_str = ''.join(ground_truth)
+    rouge_score = rouge.get_scores(generated_str, ground_truth_str)
+    return rouge_score[0]['rouge-l']['f']
 
 
 def evaluate_bleu_and_rouge(model, tokenizer, device, dev_samples, vocab_size, context_size=5, max_length=1024, num_samples=200):
@@ -29,26 +44,31 @@ def evaluate_bleu_and_rouge(model, tokenizer, device, dev_samples, vocab_size, c
     rouge = Rouge()
 
     # Subsample num_samples samples from the dev set
+    random.seed(100)
     sampled_dev_set = random.sample(dev_samples, num_samples)
 
     for sample in sampled_dev_set:
         # Select the first 'context_size' tokens as the context
+        words = sample.split()
+        context_words = words[:context_size]
+        initial_string = " ".join(context_words)
         sample = tokenizer.tokenize(sample)
-        context = sample[:context_size]
+        context = tokenizer.tokenize(initial_string)
         initial_string = tokenizer.detokenize(context)
 
         # Generate the sequence using the model
         generated_sequence = generate_sequence(model, device, tokenizer, initial_string, vocab_size, max_length)
+        generated_continuation = generated_sequence[len(tokenizer.detokenize(context)):]
+        generated_continuation = tokenizer.tokenize(generated_continuation)[1:]
 
         # The remaining part of the sample is the ground truth (completion)
-        ground_truth = sample[context_size:]
-
-        bleu_score = sentence_bleu(ground_truth, generated_sequence)
+        ground_truth = sample[len(context):]
+        bleu_score = evaluate_bleu_characters(generated_continuation, ground_truth)
         bleu_scores.append(bleu_score)
 
         # Calculate ROUGE score for the generated sequence
-        rouge_score = rouge.get_scores(''.join(generated_sequence), ''.join(ground_truth))
-        rouge_scores.append(rouge_score[0]['rouge-l']['f'])
+        rouge_score = evaluate_rouge_characters(generated_continuation, ground_truth)
+        rouge_scores.append(rouge_score)
 
     # Calculate average BLEU and ROUGE scores
     avg_bleu_score = sum(bleu_scores) / len(bleu_scores)
@@ -60,7 +80,7 @@ def evaluate_bleu_and_rouge(model, tokenizer, device, dev_samples, vocab_size, c
     return avg_bleu_score, avg_rouge_score
 
 
-def generate_sequence(model, device, tokenizer, context, vocab_size, max_length=256, context_size=256, top_k=10):
+def generate_sequence(model, device, tokenizer, context, vocab_size, max_length=512, context_size=256, top_k=10):
     """
     Generates a sequence using the provided model and tokenizer with the given context.
 
@@ -85,7 +105,6 @@ def generate_sequence(model, device, tokenizer, context, vocab_size, max_length=
         context_ids = torch.tensor(context_tokens).unsqueeze(0).to(device)
 
     generated_sequence = context_tokens[:-1]
-    print(generated_sequence)
 
     # Start generating tokens
     for _ in range(max_length):
@@ -140,7 +159,5 @@ def generate_sequence(model, device, tokenizer, context, vocab_size, max_length=
         if next_token == tokenizer.end_token:
             break
 
-    print(generated_sequence)
     generated_sequence = tokenizer.detokenize(generated_sequence)
-    # print(generated_sequence)
     return generated_sequence

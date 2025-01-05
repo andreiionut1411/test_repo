@@ -3,3 +3,4 @@ pandas==2.2.3
 torch==2.5.1
 nltk==3.9.1
 rouge==1.0.1
+matplotlib==3.10.0

@@ -7,10 +7,10 @@ import torch.optim as optim
 from transformers import get_linear_schedule_with_warmup
 from tqdm import tqdm
 from torch.nn.utils.rnn import pad_sequence
-from utils import evaluate_bleu_and_rouge
 import argparse
 import os
 import json
+from torch.nn.utils import clip_grad_norm_
 
 
 class TextDataset(Dataset):
@@ -41,7 +41,8 @@ def collate_fn(batch, pad_token_idx):
     return inputs_padded, targets_padded
 
 
-def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, tokenizer: object, model_name: str):
+def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, batch_size: int, weigh_decay: int,
+         learning_rate: float, epochs: int, tokenizer: object, model_name: str):
     if not os.path.exists('models'):
         os.mkdir('models')
 
@@ -79,13 +80,13 @@ def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, tokenizer: ob
 
     # Create the data loaders
     train_dataset = TextDataset(train_tokens, vocab, pad_token_idx, tokenizer)
-    train_dataloader = DataLoader(train_dataset, batch_size=50, shuffle=True,
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
                                   collate_fn=lambda batch: collate_fn(batch, train_dataset.pad_token_idx))
     dev_dataset = TextDataset(dev_tokens, vocab, pad_token_idx, tokenizer)
-    dev_dataloader = DataLoader(dev_dataset, batch_size=50, shuffle=False,
+    dev_dataloader = DataLoader(dev_dataset, batch_size=batch_size, shuffle=False,
                                 collate_fn=lambda batch: collate_fn(batch, train_dataset.pad_token_idx))
     eval_dataset = TextDataset(eval_tokens, vocab, pad_token_idx, tokenizer)
-    eval_dataloader = DataLoader(eval_dataset, batch_size=50, shuffle=False,
+    eval_dataloader = DataLoader(eval_dataset, batch_size=batch_size, shuffle=False,
                                  collate_fn=lambda batch: collate_fn(batch, train_dataset.pad_token_idx))
 
     vocab_size = len(train_dataset.vocab)
@@ -100,8 +101,8 @@ def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, tokenizer: ob
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
-    optimizer = optim.AdamW(model.parameters(), lr=2e-3, weight_decay=0.01)
-    num_epochs = 2
+    optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weigh_decay)
+    num_epochs = epochs
 
     # Define scheduler
     num_training_steps = len(train_dataloader) * num_epochs
@@ -109,6 +110,10 @@ def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, tokenizer: ob
     scheduler = get_linear_schedule_with_warmup(optimizer,
                                                 num_warmup_steps=num_warmup_steps,
                                                 num_training_steps=num_training_steps)
+
+    if model_name.startswith("big"):
+        max_grad_norm = 1.0
+
     for epoch in range(num_epochs):
         # Training loop
         model.train()
@@ -120,6 +125,10 @@ def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, tokenizer: ob
             loss = causal_language_model_loss(logits, targets, train_dataset.pad_token_idx)
             optimizer.zero_grad()
             loss.backward()
+
+            if model_name.startswith("big"):
+                clip_grad_norm_(model.parameters(), max_grad_norm)
+
             optimizer.step()
             scheduler.step()
 
@@ -191,9 +200,6 @@ def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, tokenizer: ob
 
     # Save the model
     torch.save(model.state_dict(), os.path.join('models', model_name + '.pth'))
-    model.eval()
-
-    # evaluate_bleu_and_rouge(model, tokenizer, device, processor.dev_samples, vocab_size)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run the training with different configs for the model")
@@ -205,6 +211,11 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.size == 'small' and args.tokenizer == 'char':
-        main(d_model=384, num_heads=8, d_ff=1536, num_layers=6, tokenizer=CharacterLevelTokenizer(), model_name='small_char')
+        main(d_model=384, num_heads=8, d_ff=1536, num_layers=6, learning_rate=2e-3, epochs=25, batch_size=50, weigh_decay=0.01,
+             tokenizer=CharacterLevelTokenizer(), model_name='small_char')
     elif args.size == 'small' and args.tokenizer == 'word':
-        main(d_model=384, num_heads=8, d_ff=1536, num_layers=6, tokenizer=SubwordTokenizer(), model_name="small_word")
+        main(d_model=384, num_heads=8, d_ff=1536, num_layers=6, learning_rate=1e-4, epochs=40, batch_size=50, weigh_decay=0.01,
+             tokenizer=SubwordTokenizer(), model_name="small_word")
+    elif args.size == 'large' and args.tokenizer == 'char':
+        main(d_model=512, num_heads=8, d_ff=2048, num_layers=8, learning_rate=5e-4, epochs=25, batch_size=32, weigh_decay=0.005,
+             tokenizer=CharacterLevelTokenizer(), model_name="big_char")

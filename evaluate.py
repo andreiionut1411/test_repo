@@ -4,7 +4,8 @@ import argparse
 from tokenizers_classes import CharacterLevelTokenizer, SubwordTokenizer
 import os
 import json
-from utils import generate_sequence
+from dataset_processor import ShakespeareDatasetProcessor
+from utils import generate_sequence, evaluate_bleu_and_rouge
 
 
 def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, tokenizer: object, model_name: str):
@@ -19,7 +20,13 @@ def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, tokenizer: ob
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
-    print(generate_sequence(model, device, tokenizer, "Richard:", vocab_size))
+    processor = ShakespeareDatasetProcessor('Shakespeare_data.csv')
+    processor.load_data()
+    samples = processor.process_data()
+    samples = [' '.join(sample) for sample in samples]
+    processor.split_data(samples)
+
+    evaluate_bleu_and_rouge(model, tokenizer, device, processor.dev_samples, vocab_size, num_samples=200)
 
 
 if __name__ == '__main__':
