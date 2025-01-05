@@ -37,9 +37,15 @@ def collate_fn(batch, pad_token_idx):
 
 
 def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, tokenizer: object, model_name: str):
-    os.mkdir('models')
-    os.mkdir('losses')
-    os.mkdir('vocab')
+    if not os.path.exists('models'):
+        os.mkdir('models')
+
+    if not os.path.exists('losses'):
+        os.mkdir('losses')
+
+    if not os.path.exists('vocab'):
+        os.mkdir('vocab')
+
     processor = ShakespeareDatasetProcessor('Shakespeare_data.csv')
     processor.load_data()
     samples = processor.process_data()
@@ -77,7 +83,7 @@ def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, tokenizer: ob
     # after the model was trained.
     with open(os.path.join('vocab', model_name + '.txt'), 'w') as file:
         file.write(str(vocab_size) + '\n')
-        file.write(str(pad_token_idx))
+        file.write(str(pad_token_idx) + '\n')
         json.dump(vocab, file)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -175,7 +181,7 @@ def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, tokenizer: ob
     torch.save(model.state_dict(), os.path.join('models', model_name + '.pth'))
     model.eval()
 
-    evaluate_bleu_and_rouge(model, tokenizer, device, processor.dev_samples, vocab_size)
+    # evaluate_bleu_and_rouge(model, tokenizer, device, processor.dev_samples, vocab_size)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run the training with different configs for the model")
