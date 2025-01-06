@@ -26,7 +26,8 @@ def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, tokenizer: ob
     samples = [' '.join(sample) for sample in samples]
     processor.split_data(samples)
 
-    # evaluate_bleu_and_rouge(model, tokenizer, device, processor.dev_samples, vocab_size, num_samples=200)
+    # evaluate_bleu_and_rouge(model, tokenizer, device, processor.dev_samples, vocab_size, num_samples=5)
+    print(generate_sequence(model, device, tokenizer, "Richard: What has ", vocab_size))
 
 
 
@@ -44,4 +45,4 @@ if __name__ == '__main__':
     elif args.size == 'small' and args.tokenizer == 'word':
         main(d_model=384, num_heads=8, d_ff=1536, num_layers=6, tokenizer=SubwordTokenizer(), model_name='small_word')
     elif args.size == 'large' and args.tokenizer == 'char':
-        main(d_model=512, num_heads=8, d_ff=2048, num_layers=8, tokenizer=SubwordTokenizer(), model_name='large_char')
+        main(d_model=512, num_heads=8, d_ff=2048, num_layers=8, tokenizer=CharacterLevelTokenizer(), model_name='large_char')

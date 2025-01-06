@@ -217,5 +217,8 @@ if __name__ == '__main__':
         main(d_model=384, num_heads=8, d_ff=1536, num_layers=6, learning_rate=1e-4, epochs=40, batch_size=50, weigh_decay=0.01,
              tokenizer=SubwordTokenizer(), model_name="small_word")
     elif args.size == 'large' and args.tokenizer == 'char':
-        main(d_model=512, num_heads=8, d_ff=2048, num_layers=8, learning_rate=5e-4, epochs=25, batch_size=32, weigh_decay=0.005,
+        main(d_model=512, num_heads=8, d_ff=2048, num_layers=8, learning_rate=1e-3, epochs=35, batch_size=32, weigh_decay=0.005,
              tokenizer=CharacterLevelTokenizer(), model_name="large_char")
+    elif args.size == 'large' and args.tokenizer == 'word':
+        main(d_model=512, num_heads=8, d_ff=2048, num_layers=8, learning_rate=5e-4, epochs=45, batch_size=32, weigh_decay=0.005,
+             tokenizer=SubwordTokenizer(), model_name="large_word")
