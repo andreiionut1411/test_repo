@@ -3,6 +3,7 @@ import torch
 from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 from rouge import Rouge
 import torch.nn.functional as F
+import re
 from tokenizers_classes	 import CharacterLevelTokenizer, SubwordTokenizer
 
 
@@ -15,29 +16,40 @@ def evaluate_bleu_characters(generated_sequence, ground_truth):
 
 def evaluate_rouge_characters(generated_sequence, ground_truth):
     rouge = Rouge()
-    generated_str = ''.join(generated_sequence)  # Join tokens into a string if needed
+    generated_str = ''.join(generated_sequence)
     ground_truth_str = ''.join(ground_truth)
     rouge_score = rouge.get_scores(generated_str, ground_truth_str)
     return rouge_score[0]['rouge-l']['f']
 
 
+def evaluate_bleu_subwords(generated_continuation, ground_truth, tokenizer):
+    generated_tokens = tokenizer.detokenize(generated_continuation)
+    ground_truth_tokens = tokenizer.detokenize(ground_truth)
+    generated_tokens = generated_tokens.split()
+    ground_truth_tokens = ground_truth_tokens.split()
+
+    smoothie = SmoothingFunction().method1
+    bleu_score = sentence_bleu([ground_truth_tokens], generated_tokens, smoothing_function=smoothie)
+
+    return bleu_score
+
+
+def evaluate_rouge_subwords(generated_continuation, ground_truth, tokenizer):
+    generated_tokens = tokenizer.detokenize(generated_continuation)
+    ground_truth_tokens = tokenizer.detokenize(ground_truth)
+
+    if not generated_tokens.strip() or generated_tokens.strip() == "<EOS>" or \
+        not re.search(r'\w', generated_tokens) or not re.search(r'\w', ground_truth_tokens) or \
+        ground_truth_tokens.strip() == "<EOS>" or not ground_truth_tokens.strip():
+        return 0.0
+
+    rouge = Rouge()
+    scores = rouge.get_scores(generated_tokens, ground_truth_tokens, avg=True)
+
+    return scores['rouge-l']['f']
+
+
 def evaluate_bleu_and_rouge(model, tokenizer, device, dev_samples, vocab_size, context_size=5, max_length=1024, num_samples=200):
-    """
-    Evaluates BLEU and ROUGE scores for the model.
-
-    Args:
-        model: The trained model.
-        tokenizer: The tokenizer used for encoding/decoding.
-        device: The device ('cpu' or 'cuda').
-        dev_samples: List of samples from the dev set.
-        context_size: Number of tokens to use for the context (starting tokens).
-        max_length: Maximum length of the generated sequence.
-        num_samples: The number of samples to evaluate (subsampled).
-
-    Returns:
-        BLEU score and ROUGE score for the generated sequences.
-    """
-    # For BLEU and ROUGE calculation
     bleu_scores = []
     rouge_scores = []
 
@@ -48,29 +60,30 @@ def evaluate_bleu_and_rouge(model, tokenizer, device, dev_samples, vocab_size, c
     sampled_dev_set = random.sample(dev_samples, num_samples)
 
     for sample in sampled_dev_set:
-        # Select the first 'context_size' tokens as the context
         words = sample.split()
         context_words = words[:context_size]
         initial_string = " ".join(context_words)
         sample = tokenizer.tokenize(sample)
         context = tokenizer.tokenize(initial_string)
         initial_string = tokenizer.detokenize(context)
-
-        # Generate the sequence using the model
         generated_sequence = generate_sequence(model, device, tokenizer, initial_string, vocab_size, max_length)
+
         generated_continuation = generated_sequence[len(tokenizer.detokenize(context)):]
         generated_continuation = tokenizer.tokenize(generated_continuation)[1:]
-
-        # The remaining part of the sample is the ground truth (completion)
         ground_truth = sample[len(context):]
-        bleu_score = evaluate_bleu_characters(generated_continuation, ground_truth)
+
+        if type(tokenizer) == CharacterLevelTokenizer:
+            bleu_score = evaluate_bleu_characters(generated_continuation, ground_truth)
+        else:
+            bleu_score = evaluate_bleu_subwords(generated_continuation, ground_truth, tokenizer)
         bleu_scores.append(bleu_score)
 
-        # Calculate ROUGE score for the generated sequence
-        rouge_score = evaluate_rouge_characters(generated_continuation, ground_truth)
+        if type(tokenizer) == CharacterLevelTokenizer:
+            rouge_score = evaluate_rouge_characters(generated_continuation, ground_truth)
+        else:
+            rouge_score = evaluate_rouge_subwords(generated_continuation, ground_truth, tokenizer)
         rouge_scores.append(rouge_score)
 
-    # Calculate average BLEU and ROUGE scores
     avg_bleu_score = sum(bleu_scores) / len(bleu_scores)
     avg_rouge_score = sum(rouge_scores) / len(rouge_scores)
 
@@ -81,22 +94,6 @@ def evaluate_bleu_and_rouge(model, tokenizer, device, dev_samples, vocab_size, c
 
 
 def generate_sequence(model, device, tokenizer, context, vocab_size, max_length=512, context_size=256, top_k=10):
-    """
-    Generates a sequence using the provided model and tokenizer with the given context.
-
-    Args:
-        model: The trained transformer model.
-        tokenizer: The tokenizer used to encode/decode tokens.
-        context: The starting sequence to generate from (typically a list with the <SOS> token).
-        vocab_size: Size of the vocabulary.
-        max_length: The maximum length for the generated sequence.
-        context_size: The maximum number of tokens the model can attend to.
-        top_k: The number of top tokens to consider during sampling (for top-k sampling).
-
-    Returns:
-        generated_sequence: List of tokens generated by the model.
-    """
-    # Prepare the context (input sequence)
     context_tokens = tokenizer.tokenize(context)
 
     if type(tokenizer) == CharacterLevelTokenizer:
@@ -106,52 +103,30 @@ def generate_sequence(model, device, tokenizer, context, vocab_size, max_length=
 
     generated_sequence = context_tokens[:-1]
 
-    # Start generating tokens
     for _ in range(max_length):
-        # print("Start a new token")
-        # Get the logits for the next token from the model
         logits = model(context_ids)
+        logits = logits[:, -1, :]
 
-        # Focus on the last token's logits (output of the transformer)
-        logits = logits[:, -1, :]  # Shape: (batch_size, vocab_size)
-
-        # Apply top-k sampling if top_k is set
+        # Apply top-k sampling
         if top_k > 0:
-            # Get the top-k token logits
             top_k_values, top_k_indices = torch.topk(logits, top_k)
-            # Normalize probabilities
             top_k_probs = F.softmax(top_k_values, dim=-1)
 
-            # Detach from the computation graph before using numpy()
             top_k_indices = top_k_indices.detach().cpu().numpy()[0]
             top_k_probs = top_k_probs.detach().cpu().numpy()[0]
-
-            # Sample a token from the top-k candidates
-            # print("Choices:")
-            # print(top_k_indices)
             next_token_id = random.choices(top_k_indices, top_k_probs)[0]
         else:
-            # Otherwise use argmax (greedy sampling)
+            # Otherwise use argmax
             next_token_id = torch.argmax(logits, dim=-1).item()
-
-        # Get the next token (from ID to token)
-        # print(tokenizer.vocab)
-        # print("Next token: ")
-        # print(next_token_id)
-        # print()
 
         if type(tokenizer) == CharacterLevelTokenizer:
             next_token = list(tokenizer.vocab.keys())[list(tokenizer.vocab.values()).index(next_token_id)]
         elif type(tokenizer) == SubwordTokenizer:
             next_token = next_token_id
 
-        # Add the generated token to the context sequence
         generated_sequence.append(next_token)
-
-        # Append the next token to the context
         context_ids = torch.cat((context_ids, torch.tensor([[next_token_id]]).to(device)), dim=1)
 
-        # Trim the context to the maximum context size
         if context_ids.size(1) > context_size:
             context_ids = context_ids[:, 1:]
 

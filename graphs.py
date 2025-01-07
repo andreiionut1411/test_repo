@@ -1,7 +1,7 @@
 import ast
 import matplotlib.pyplot as plt
 
-file_path = 'losses/small_char.txt'
+file_path = 'losses/large_word.txt'
 with open(file_path, 'r') as file:
     training_losses = ast.literal_eval(file.readline().strip())
     test_losses = ast.literal_eval(file.readline().strip())

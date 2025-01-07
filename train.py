@@ -37,7 +37,7 @@ def collate_fn(batch, pad_token_idx):
     # Shift targets to the right
     targets_padded = inputs_padded.clone()
     targets_padded[:, :-1] = inputs_padded[:, 1:]
-    targets_padded[:, -1] = pad_token_idx  # The last target token is padding
+    targets_padded[:, -1] = pad_token_idx
     return inputs_padded, targets_padded
 
 
@@ -114,6 +114,12 @@ def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, batch_size: i
     if model_name.startswith("large"):
         max_grad_norm = 1.0
 
+    # After 5 epochs with no improvements we stop
+    patience = 5
+    min_delta = 1e-4
+    best_perplexity = float('inf')
+    epochs_without_improvement = 0
+
     for epoch in range(num_epochs):
         # Training loop
         model.train()
@@ -147,16 +153,13 @@ def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, batch_size: i
         with torch.no_grad():
             for batch_idx, (inputs, targets) in tqdm(enumerate(dev_dataloader), total=len(dev_dataloader), desc=f"Epoch {epoch+1}/{num_epochs} - Dev PPL"):
                 inputs, targets = inputs.to(device), targets.to(device)
-
-                # Forward pass through the model
                 logits = model(inputs)
 
-                # Compute the causal loss (same as during training)
                 loss = causal_language_model_loss(logits, targets, pad_token_idx=train_dataset.pad_token_idx)
 
                 total_loss += loss.item()
                 non_pad_tokens = (targets != train_dataset.pad_token_idx).sum().item()
-                total_log_likelihood += loss.item() * non_pad_tokens  # Multiply by batch size
+                total_log_likelihood += loss.item() * non_pad_tokens
                 total_token_count += non_pad_tokens
 
         # Calculate perplexity
@@ -169,6 +172,18 @@ def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, batch_size: i
         print(f"Epoch [{epoch+1}/{num_epochs}] - Dev Loss: {avg_dev_loss:.3f}")
         print(f"Epoch [{epoch+1}/{num_epochs}] - Dev Perplexity: {perplexity.item():.3f}")
 
+        if perplexity.item() < best_perplexity - min_delta:
+            best_perplexity = perplexity.item()
+            epochs_without_improvement = 0
+            print(f"New best perplexity: {best_perplexity:.3f}")
+        else:
+            epochs_without_improvement += 1
+            print(f"No improvement for {epochs_without_improvement} epochs")
+
+        if epochs_without_improvement >= patience:
+            print(f"Early stopping triggered. Best Perplexity: {best_perplexity:.3f}")
+            break
+
 
     # Evaluate the model
     model.eval()
@@ -179,8 +194,6 @@ def main(d_model: int, num_heads: int, d_ff: int, num_layers: int, batch_size: i
         for batch_idx, (inputs, targets) in tqdm(enumerate(eval_dataloader), total=len(eval_dataloader), desc="Test PPL"):
             inputs, targets = inputs.to(device), targets.to(device)
             logits = model(inputs)
-
-            # Compute causal language model loss (similar to training)
             loss = causal_language_model_loss(logits, targets, pad_token_idx=train_dataset.pad_token_idx)
 
             non_pad_tokens = (targets != train_dataset.pad_token_idx).sum().item()
@@ -220,5 +233,5 @@ if __name__ == '__main__':
         main(d_model=512, num_heads=8, d_ff=2048, num_layers=8, learning_rate=1e-3, epochs=35, batch_size=32, weigh_decay=0.005,
              tokenizer=CharacterLevelTokenizer(), model_name="large_char")
     elif args.size == 'large' and args.tokenizer == 'word':
-        main(d_model=512, num_heads=8, d_ff=2048, num_layers=8, learning_rate=5e-4, epochs=45, batch_size=32, weigh_decay=0.005,
+        main(d_model=512, num_heads=8, d_ff=2048, num_layers=8, learning_rate=4e-4, epochs=45, batch_size=32, weigh_decay=0.005,
              tokenizer=SubwordTokenizer(), model_name="large_word")
